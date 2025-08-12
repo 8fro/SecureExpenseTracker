@@ -13,8 +13,8 @@ import html
 # -------------------------
 # CONFIG - REPLACE THESE
 # -------------------------
-SENDER_EMAIL = "rajphoto1819@gmail.com"          # <- change to your Gmail (sender)
-SENDER_APP_PASSWORD = "uylhuckjfcwkxhez"     # <- change to Gmail App Password (not your normal password)
+SENDER_EMAIL = "rajpho.....xx9@gmail.com"          # <- change to your Gmail (sender)
+SENDER_APP_PASSWORD = "uylhuc..xxxxxxx"     # <- change to Gmail App Password (not your normal password)
 
 DB_FILE = "expenses.db"
 KEY_FILE = "secret.key"
