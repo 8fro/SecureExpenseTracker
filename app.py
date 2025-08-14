@@ -1,340 +1,47 @@
-# app.py
-# for run command --> py -m streamlit run app.py(file name) | streamlit run app.py(file name) 
+"""Secure Expense Tracker — Cyber UI
 
-import streamlit as st
-import sqlite3
-import random
-import smtplib
-from email.mime.text import MIMEText
-from cryptography.fernet import Fernet
+Run: streamlit run app.py
+"""
+
 import os
 import html
-
-# -------------------------
-# CONFIG - REPLACE THESE
-# -------------------------
-SENDER_EMAIL = "rajpho.....xx9@gmail.com"          # <- change to your Gmail (sender)
-SENDER_APP_PASSWORD = "uylhuc..xxxxxxx"     # <- change to Gmail App Password (not your normal password)
-
-DB_FILE = "expenses.db"
-KEY_FILE = "secret.key"
-
-# -------------------------
-# DB & KEY Setup
-# -------------------------
-# create DB connection (allow cross-thread)
-conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-c = conn.cursor()
-
-# Create table with amount as BLOB (so encrypted bytes store correctly)
-c.execute('''
-CREATE TABLE IF NOT EXISTS expenses (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    category TEXT,
-    amount BLOB,
-    description TEXT
-)
-''')
-conn.commit()
-
-# load or create encryption key (persisted)
-if not os.path.exists(KEY_FILE):
-    key = Fernet.generate_key()
-    with open(KEY_FILE, "wb") as f:
-        f.write(key)
-else:
-    with open(KEY_FILE, "rb") as f:
-        key = f.read()
-
-fernet = Fernet(key)
-
-# -------------------------
-# Helpers: OTP, encryption safe functions
-# -------------------------
-def generate_otp(length: int = 6) -> str:
-    return ''.join(random.choices("0123456789", k=length))
-
-def send_otp_email(to_email: str, otp: str) -> bool:
-    """
-    Send OTP via Gmail SMTP using SENDER_EMAIL and SENDER_APP_PASSWORD.
-    Returns True on success, False otherwise.
-    """
-    try:
-        msg = MIMEText(f"Your OTP for Secure Expense Tracker is: {otp}")
-        msg['Subject'] = "SecureExpenseTracker — OTP"
-        msg['From'] = SENDER_EMAIL
-        msg['To'] = to_email
-
-        # Use STARTTLS
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(SENDER_EMAIL, SENDER_APP_PASSWORD)
-        server.sendmail(SENDER_EMAIL, to_email, msg.as_string())
-        server.quit()
-        return True
-    except Exception as e:
-        st.error(f"Failed to send OTP email: {e}")
-        return False
-
-def to_bytes(token):
-    """
-    Normalize token to bytes. Handles bytes, memoryview, bytearray, str, None.
-    """
-    if token is None:
-        return b''
-    if isinstance(token, bytes):
-        return token
-    if isinstance(token, memoryview):
-        return token.tobytes()
-    if isinstance(token, bytearray):
-        return bytes(token)
-    if isinstance(token, str):
-        return token.encode('utf-8')
-    # fallback
-    return str(token).encode('utf-8')
-
-def safe_decrypt(token):
-    """
-    Try to decrypt token using Fernet. If decryption fails, return readable string.
-    This prevents the TypeError and avoids crashing when encountering unexpected DB values.
-    """
-    try:
-        token_bytes = to_bytes(token)
-        return fernet.decrypt(token_bytes).decode('utf-8')
-    except Exception:
-        # if decrypt fails, try to decode bytes to string or return str(token)
-        try:
-            return to_bytes(token).decode('utf-8', errors='ignore')
-        except Exception:
-            return str(token)
-
-# -------------------------
-# CRUD: add & fetch
-# -------------------------
-def add_expense(category: str, amount: float, description: str):
-    # Encrypt amount as bytes and store as BLOB
-    enc = fernet.encrypt(str(amount).encode())
-    c.execute("INSERT INTO expenses (category, amount, description) VALUES (?, ?, ?)",
-              (category, enc, description))
-    conn.commit()
-
-def fetch_expenses():
-    c.execute("SELECT id, category, amount, description FROM expenses ORDER BY id DESC")
-    rows = c.fetchall()
-    # decrypt amounts safely
-    result = []
-    for rid, cat, amt, desc in rows:
-        dec_amount = safe_decrypt(amt)
-        result.append((rid, cat, dec_amount, desc))
-    return result
-
-# -------------------------
-# Page states in session
-# -------------------------
-if "page" not in st.session_state:
-    st.session_state.page = 1  # 1 = OTP, 2 = Add, 3 = DOB/View
-if "generated_otp" not in st.session_state:
-    st.session_state.generated_otp = None
-if "otp_verified" not in st.session_state:
-    st.session_state.otp_verified = False
-if "show_check_data" not in st.session_state:
-    st.session_state.show_check_data = False
-if "dob_verified" not in st.session_state:
-    st.session_state.dob_verified = False
-
-# -------------------------
-# Premium CSS + small JS
-# -------------------------
-st.set_page_config(page_title="Secure Expense Tracker", layout="wide", initial_sidebar_state="collapsed")
-st.markdown("""
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
-<style>
-:root {
-  --bg-1: #0b1221;
-  --card: rgba(255,255,255,0.04);
-  --accent: #00e0ff;
-}
-body { background: linear-gradient(180deg,var(--bg-1), #0f1b2e); font-family: 'Poppins', sans-serif; }
-.stApp { color: #e6f3fb; }
-.header { text-align:center; padding:16px 8px; }
-.h1 { color: var(--accent); font-weight:700; font-size:28px; }
-.subtitle { color:#9fc7d8; margin-top:4px; font-size:13px; }
-.card { background: var(--card); padding:18px; border-radius:12px; box-shadow: 0 8px 30px rgba(2,6,23,0.6); }
-.row { display:flex; gap:10px; align-items:center; }
-.stButton>button { background: linear-gradient(90deg,#00e0ff,#0077ff); color:white; border-radius:10px; padding:8px 14px; font-weight:600; }
-input[type="text"], textarea, input[type="password"], .stNumberInput>div>input {
-  background: rgba(255,255,255,0.03);
-  color: #e6f3fb;
-  border: 1px solid rgba(255,255,255,0.06);
-  padding:8px 10px; border-radius:8px;
-}
-.table-wrap { background: rgba(255,255,255,0.02); border-radius:10px; padding:12px; }
-thead th { color: var(--accent); }
-tbody tr:hover { background: rgba(0,224,255,0.04); }
-.small-muted { color:#9fb6c6; font-size:13px; }
-.fade { animation: fadeIn 0.5s ease both; }
-@keyframes fadeIn { from {opacity:0; transform: translateY(8px);} to {opacity:1; transform:none;} }
-</style>
-<script>
-/* small JS to focus first input on page load */
-window.addEventListener('load', () => {
-  const el = document.querySelector('input');
-  if(el) el.focus();
-});
-</script>
-""", unsafe_allow_html=True)
-
-st.markdown('<div class="header"><div class="h1">🔒 Secure Expense Tracker</div><div class="subtitle small-muted">Encrypted • Private • Simple</div></div>', unsafe_allow_html=True)
-
-# -------------------------
-# PAGE 1: OTP (email + OTP inputs side-by-side)
-# -------------------------
-if st.session_state.page == 1:
-    st.markdown('<div class="card fade">', unsafe_allow_html=True)
-    st.subheader("Step 1 — Login with OTP")
-    col1, col2 = st.columns([1, 1])
-
-    with col1:
-        email_input = st.text_input("Enter email to receive OTP", placeholder="you@example.com")
-        if st.button("Send OTP"):
-            if not email_input or "@" not in email_input:
-                st.error("Please enter a valid email address.")
-            else:
-                otp = generate_otp()
-                st.session_state.generated_otp = otp
-                # send OTP via SMTP
-                sent = send_otp_email(email_input, otp)
-                if sent:
-                    st.success("OTP sent — check your email (inbox/spam).")
-                else:
-                    st.error("Failed to send OTP. Check SMTP settings in app.py.")
-
-    with col2:
-        entered_otp = st.text_input("Enter received OTP")
-        if st.button("Verify OTP"):
-            if entered_otp and st.session_state.generated_otp and entered_otp == st.session_state.generated_otp:
-                st.session_state.otp_verified = True
-                st.session_state.page = 2
-                st.success("OTP Verified — moving to Add Expense.")
-                st.rerun()
-
-            else:
-                st.error("Invalid OTP.")
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# -------------------------
-# PAGE 2: Add Expense
-# -------------------------
-elif st.session_state.page == 2 and st.session_state.otp_verified:
-    st.markdown('<div class="card fade">', unsafe_allow_html=True)
-    st.subheader("Step 2 — Add New Expense")
-
-    # Use two-column layout for nicer spacing
-    left, right = st.columns([2, 1])
-    with left:
-        category = st.text_input("Category", placeholder="Food, Travel, Bills ...")
-        amount = st.number_input("Amount (₹)", min_value=0.0, format="%.2f")
-        description = st.text_area("Description (optional)", height=90)
-    with right:
-        if st.button("Add Expense"):
-            if not category or amount <= 0:
-                st.error("Please provide a category and amount > 0.")
-            else:
-                add_expense(category.strip(), float(amount), description.strip())
-                st.success("Expense added and encrypted.")
-                st.session_state.show_check_data = True
-
-    if st.session_state.get("show_check_data"):
-        st.markdown("<div style='margin-top:12px;'>", unsafe_allow_html=True)
-        if st.button("Check Your Data — View (next)"):
-            st.session_state.page = 3
-            st.rerun()
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# -------------------------
-# PAGE 3: DOB verification & View
-# -------------------------
-elif st.session_state.page == 3:
-    st.markdown('<div class="card fade">', unsafe_allow_html=True)
-    st.subheader("Step 3 — Verify DOB to Decrypt & View Data")
-
-    dob_input = st.text_input("Enter DOB (dd-mm-yyyy)", type="password", placeholder="dd-mm-yyyy")
-    if st.button("Verify DOB & Show Expenses"):
-        if dob_input and dob_input.strip():
-            st.session_state.dob_verified = True
-        else:
-            st.error("Please enter DOB to unlock.")
-
-    if st.session_state.dob_verified:
-        expenses = fetch_expenses()
-        if not expenses:
-            st.info("No expenses recorded yet.")
-        else:
-            # Build stylized HTML table to keep premium look
-            table_html = "<div class='table-wrap'><table style='width:100%; border-collapse:collapse;'><thead><tr><th style='text-align:left;padding:8px;'>ID</th><th style='text-align:left;padding:8px;'>Category</th><th style='text-align:left;padding:8px;'>Amount (₹)</th><th style='text-align:left;padding:8px;'>Description</th></tr></thead><tbody>"
-            for rid, cat, amt, desc in expenses:
-                cat_escaped = html.escape(str(cat))
-                desc_escaped = html.escape(str(desc))
-                amt_escaped = html.escape(str(amt))
-                table_html += f"<tr><td style='padding:8px;border-top:1px solid rgba(255,255,255,0.03);'>{rid}</td><td style='padding:8px;border-top:1px solid rgba(255,255,255,0.03);'>{cat_escaped}</td><td style='padding:8px;border-top:1px solid rgba(255,255,255,0.03);'>{amt_escaped}</td><td style='padding:8px;border-top:1px solid rgba(255,255,255,0.03);'>{desc_escaped}</td></tr>"
-            table_html += "</tbody></table></div>"
-            st.markdown(table_html, unsafe_allow_html=True)
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# Footer / tips
-st.markdown("<hr style='opacity:0.06'/>", unsafe_allow_html=True)
-st.markdown("<div class='small-muted' style='text-align:center'>Keep <code>secret.key</code> safe. If lost, previously encrypted amounts cannot be recovered.</div>", unsafe_allow_html=True)
-
-
-
-####################################################################################################################################################################################################
-# Here is no any OTP genreter bacause this is for testing code time and again an again otp check
-
-
-# app.py
-import streamlit as st
-import sqlite3
 import random
-import string
-import os
-from cryptography.fernet import Fernet
-# smtplib and email are left below if you want to enable real email sending
+import sqlite3
 import smtplib
 from email.mime.text import MIMEText
+
+import streamlit as st
+from cryptography.fernet import Fernet
+
 
 # -----------------------------
 # CONFIG
 # -----------------------------
-DEV_MODE = True   # True = show OTP in app (development). False = send real email via SMTP.
-SENDER_EMAIL = "youremail@gmail.com"         # only required if DEV_MODE=False
-SENDER_APP_PASSWORD = "your_app_password"    # only required if DEV_MODE=False (Gmail app password)
-# Note: do not commit real credentials to GitHub. Use environment variables for production.
+DEV_MODE = False  # True = show OTP in-app; False = use SMTP
+SENDER_EMAIL = os.getenv("SET_SENDER_EMAIL", "rajphoto1819@gmail.com")
+SENDER_APP_PASSWORD = os.getenv("SET_SENDER_APP_PASSWORD", "uylhuckjfcwkxhez")
 
 DB_FILE = "expenses.db"
 KEY_FILE = "secret.key"
 
+
 # -----------------------------
 # DB + KEY Setup
 # -----------------------------
-# ensure DB exists and table exists
 conn = sqlite3.connect(DB_FILE, check_same_thread=False)
 c = conn.cursor()
-c.execute('''
+c.execute(
+    """
     CREATE TABLE IF NOT EXISTS expenses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         category TEXT,
         amount TEXT,
         description TEXT
     )
-''')
+    """
+)
 conn.commit()
 
-# load or create encryption key (persisted to KEY_FILE)
 if not os.path.exists(KEY_FILE):
     key = Fernet.generate_key()
     with open(KEY_FILE, "wb") as f:
@@ -345,17 +52,15 @@ else:
 
 fernet = Fernet(key)
 
+
 # -----------------------------
-# Helpers: OTP, send, safe decrypt
+# Helpers
 # -----------------------------
 def generate_otp(length: int = 6) -> str:
-    return ''.join(random.choices(string.digits, k=length))
+    return "".join(random.choices("0123456789", k=length))
+
 
 def send_otp_via_smtp(to_email: str, otp: str) -> bool:
-    """
-    Send OTP via Gmail SMTP. Only used when DEV_MODE=False.
-    Requires SENDER_EMAIL and SENDER_APP_PASSWORD to be set correctly.
-    """
     try:
         msg = MIMEText(f"Your OTP for Secure Expense Tracker is: {otp}")
         msg["Subject"] = "SecureExpenseTracker — OTP"
@@ -371,11 +76,10 @@ def send_otp_via_smtp(to_email: str, otp: str) -> bool:
         st.error(f"Failed to send OTP: {e}")
         return False
 
+
 def to_bytes(token):
-    """Normalize token to bytes so Fernet.decrypt accepts it.
-       Handles bytes, memoryview, bytearray, str and None."""
     if token is None:
-        return b''
+        return b""
     if isinstance(token, bytes):
         return token
     if isinstance(token, memoryview):
@@ -383,187 +87,986 @@ def to_bytes(token):
     if isinstance(token, bytearray):
         return bytes(token)
     if isinstance(token, str):
-        # token may be a decoded string - convert to bytes
-        return token.encode('utf-8')
-    # fallback
-    return str(token).encode('utf-8')
+        return token.encode("utf-8")
+    return str(token).encode("utf-8")
+
 
 def safe_decrypt(token):
-    """Try to decrypt token; if any error, return readable string (won't crash UI)."""
     try:
         token_bytes = to_bytes(token)
-        return fernet.decrypt(token_bytes).decode('utf-8')
+        return fernet.decrypt(token_bytes).decode("utf-8")
     except Exception:
-        # If decrypt fails, try to present token as readable string
         try:
-            return to_bytes(token).decode('utf-8', errors='ignore')
+            return to_bytes(token).decode("utf-8", errors="ignore")
         except Exception:
             return str(token)
 
-# -----------------------------
-# CRUD operations (use text for stored encrypted token)
-# -----------------------------
+
 def add_expense(category: str, amount: float, description: str):
-    # store encrypted amount as UTF-8 string (avoids memoryview/BLOB issues)
-    encrypted_amount = fernet.encrypt(str(amount).encode()).decode('utf-8')
-    c.execute("INSERT INTO expenses (category, amount, description) VALUES (?, ?, ?)",
-              (category, encrypted_amount, description))
+    encrypted_amount = fernet.encrypt(str(amount).encode()).decode("utf-8")
+    c.execute(
+        "INSERT INTO expenses (category, amount, description) VALUES (?, ?, ?)",
+        (category, encrypted_amount, description),
+    )
     conn.commit()
 
-def get_all_expenses():
+
+def fetch_expenses():
     c.execute("SELECT id, category, amount, description FROM expenses ORDER BY id DESC")
     rows = c.fetchall()
-    # decrypt amount for display using safe_decrypt
     return [(rid, cat, safe_decrypt(amount), desc) for (rid, cat, amount, desc) in rows]
 
+
+def compute_stats(rows):
+    total_count = len(rows)
+    total_amount = 0.0
+    categories = set()
+    for _, cat, amt, _ in rows:
+        categories.add(str(cat).strip())
+        try:
+            total_amount += float(str(amt))
+        except Exception:
+            pass
+    return total_count, total_amount, len([c for c in categories if c])
+
+
 # -----------------------------
-# Premium UI (CSS + font + small JS snippet)
+# Ultra Modern Cyber UI
 # -----------------------------
-st.set_page_config(page_title="Secure Expense Tracker", layout="wide")
-st.markdown("""
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+st.set_page_config(page_title="Secure Expense Tracker", page_icon="🛡️", layout="wide")
+
+# Advanced CSS with stunning effects
+st.markdown(
+    """
 <style>
-:root{
-  --bg1: #0f1724;
-  --bg2: #111827;
-  --accent: #00e0ff;
-  --card: rgba(255,255,255,0.04);
+/* Ultra Modern Cyber Theme */
+:root {
+    --primary: #00d4ff;
+    --secondary: #00ff88;
+    --accent: #ff6b35;
+    --danger: #ff2e63;
+    --success: #00ff88;
+    --warning: #ff6b35;
+    --dark-bg: #0a0f1a;
+    --card-bg: rgba(255,255,255,0.03);
+    --border: rgba(255,255,255,0.08);
+    --glow: rgba(0,212,255,0.3);
+    --neon-glow: 0 0 20px rgba(0,212,255,0.6), 0 0 40px rgba(0,212,255,0.3);
 }
-body { background: linear-gradient(180deg, var(--bg1), var(--bg2)); font-family: 'Poppins', sans-serif; }
-.stApp { color: #e6eef6; }
+
+/* Advanced Animations */
+@keyframes matrix {
+    0% { transform: translateY(-100vh) rotate(0deg); opacity: 0; }
+    50% { opacity: 0.8; }
+    100% { transform: translateY(100vh) rotate(360deg); opacity: 0; }
+}
+
+@keyframes glitch {
+    0% { transform: translate(0); filter: hue-rotate(0deg); }
+    20% { transform: translate(-2px, 2px); filter: hue-rotate(90deg); }
+    40% { transform: translate(-2px, -2px); filter: hue-rotate(180deg); }
+    60% { transform: translate(2px, 2px); filter: hue-rotate(270deg); }
+    80% { transform: translate(2px, -2px); filter: hue-rotate(360deg); }
+    100% { transform: translate(0); filter: hue-rotate(0deg); }
+}
+
+@keyframes scanline {
+    0% { transform: translateY(-100%); opacity: 0; }
+    50% { opacity: 1; }
+    100% { transform: translateY(100vh); opacity: 0; }
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(1.05); }
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(50px) scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes slideInLeft {
+    from {
+        opacity: 0;
+        transform: translateX(-100px) skewX(-10deg);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0) skewX(0deg);
+    }
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(100px) skewX(10deg);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0) skewX(0deg);
+    }
+}
+
+@keyframes typewriter {
+    from { width: 0; }
+    to { width: 100%; }
+}
+
+@keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+}
+
+@keyframes float {
+    0%, 100% { transform: translateY(0px) rotate(0deg); }
+    50% { transform: translateY(-20px) rotate(180deg); }
+}
+
+@keyframes gradientShift {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+}
+
+/* Ultra Background */
+.main .block-container {
+    background: 
+        radial-gradient(2000px 1000px at 10% -5%, rgba(0,212,255,0.15), transparent),
+        radial-gradient(1500px 800px at 90% 10%, rgba(0,255,136,0.12), transparent),
+        radial-gradient(1200px 600px at 50% 90%, rgba(255,46,99,0.08), transparent),
+        linear-gradient(135deg, #0a0f1a 0%, #1a1f2a 50%, #0a0f1a 100%);
+    color: #ffffff;
+    position: relative;
+    overflow: hidden;
+    min-height: 100vh;
+}
+
+/* Matrix Rain Effect */
+.main .block-container::before {
+    content: "01アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    color: rgba(0, 212, 255, 0.1);
+    line-height: 12px;
+    white-space: pre-wrap;
+    pointer-events: none;
+    z-index: -1;
+    animation: matrix 25s linear infinite;
+}
+
+/* Scanline Effect */
+.main .block-container::after {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    background: linear-gradient(90deg, transparent, var(--primary), var(--secondary), transparent);
+    animation: scanline 4s linear infinite;
+    pointer-events: none;
+    z-index: 1;
+    box-shadow: 0 0 20px var(--primary);
+}
+
+/* Ultra Header */
 .header {
-  text-align:center;
-  padding: 18px 10px;
-  margin-bottom: 8px;
+    text-align: center;
+    padding: 3rem 2rem;
+    margin-bottom: 3rem;
+    background: linear-gradient(135deg, rgba(0,212,255,0.1), rgba(0,255,136,0.1));
+    border-radius: 25px;
+    border: 2px solid var(--border);
+    position: relative;
+    overflow: hidden;
+    animation: fadeInUp 2s ease-out;
+    backdrop-filter: blur(20px);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
 }
+
+.header::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(0,212,255,0.2), transparent);
+    animation: slideInLeft 3s ease-out 1s forwards;
+}
+
+.header::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--primary), var(--secondary), transparent);
+    animation: gradientShift 3s ease infinite;
+}
+
+.brand {
+    font-size: 3.5rem;
+    font-weight: 900;
+    color: var(--primary);
+    text-shadow: var(--neon-glow);
+    margin-bottom: 1rem;
+    animation: glitch 0.3s ease-in-out infinite;
+    position: relative;
+    letter-spacing: 3px;
+}
+
+.brand::before {
+    content: "🛡️";
+    position: absolute;
+    left: -60px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 2.5rem;
+    animation: float 3s ease-in-out infinite;
+}
+
+.brand::after {
+    content: "🛡️";
+    position: absolute;
+    right: -60px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 2.5rem;
+    animation: float 3s ease-in-out infinite 1.5s;
+}
+
+.sub {
+    color: #cccccc;
+    font-size: 1.2rem;
+    margin-bottom: 1.5rem;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+
+/* Ultra Cards */
 .card {
-  background: var(--card);
-  border-radius: 14px;
-  padding: 18px;
-  box-shadow: 0 8px 30px rgba(2,6,23,0.6);
-  backdrop-filter: blur(6px);
+    background: var(--card-bg);
+    padding: 2rem;
+    border-radius: 20px;
+    border: 2px solid var(--border);
+    margin-bottom: 2rem;
+    backdrop-filter: blur(20px);
+    animation: fadeInUp 1.5s ease-out;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 15px 45px rgba(0,0,0,0.3);
 }
-.title {
-  font-size: 28px;
-  color: var(--accent);
-  font-weight:700;
+
+.card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(0,212,255,0.1), transparent);
+    transition: left 0.8s ease;
 }
-.subtitle { color: #bcd7e6; margin-top:6px; margin-bottom:0; }
-.sidebar .sidebar-content { background: rgba(0,0,0,0.35); }
-.stButton>button {
-  background: linear-gradient(90deg,#00e0ff,#0077ff);
-  color: white; border: none; padding: 8px 14px; border-radius: 10px; font-weight:600;
+
+.card:hover::before {
+    left: 100%;
 }
-.stButton>button:hover { transform: translateY(-2px); box-shadow:0 8px 30px rgba(0,224,255,0.12); }
-input[type="text"], textarea, input[type="password"], .stNumberInput>div>input {
-  background: rgba(255,255,255,0.03);
-  color: #e6eef6;
-  border: 1px solid rgba(255,255,255,0.06);
-  padding: 8px 10px; border-radius:8px;
+
+.card:hover {
+    transform: translateY(-10px) scale(1.02);
+    box-shadow: 0 25px 70px rgba(0,212,255,0.2);
+    border-color: var(--primary);
 }
-.table-wrap { background: rgba(255,255,255,0.02); border-radius:10px; padding: 10px; }
-thead th { color: var(--accent); }
-tbody tr:hover { background: rgba(0,224,255,0.06); }
-.small-muted { color: #9fb6c6; font-size:13px; }
-.fade { animation: fadeIn .6s ease both; }
-@keyframes fadeIn { from {opacity:0; transform: translateY(6px);} to {opacity:1; transform:none;} }
+
+/* Ultra Buttons */
+.stButton > button {
+    background: linear-gradient(135deg, var(--primary), var(--secondary), var(--primary));
+    background-size: 200% 200%;
+    color: white;
+    border: none;
+    padding: 1rem 2rem;
+    border-radius: 15px;
+    font-weight: 800;
+    font-size: 1rem;
+    letter-spacing: 1px;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+    animation: gradientShift 3s ease infinite;
+    box-shadow: 0 8px 25px rgba(0,212,255,0.4);
+    text-transform: uppercase;
+}
+
+.stButton > button::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+    transition: left 0.6s ease;
+}
+
+.stButton > button:hover::before {
+    left: 100%;
+}
+
+.stButton > button:hover {
+    transform: translateY(-5px) scale(1.05);
+    box-shadow: 0 15px 40px rgba(0,212,255,0.6);
+    animation: glitch 0.3s ease-in-out;
+}
+
+/* Ultra Inputs */
+.stTextInput > div > div > input,
+.stNumberInput > div > div > input,
+.stTextArea > div > div > textarea {
+    background: rgba(255,255,255,0.05);
+    color: white;
+    border: 2px solid var(--border);
+    border-radius: 15px;
+    padding: 1rem;
+    font-size: 1rem;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(10px);
+}
+
+.stTextInput > div > div > input:focus,
+.stNumberInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 20px rgba(0,212,255,0.3);
+    background: rgba(255,255,255,0.08);
+    transform: translateY(-2px);
+}
+
+/* Ultra Stepper */
+.stepper {
+    display: flex;
+    justify-content: center;
+    gap: 1.5rem;
+    margin: 3rem 0 2rem;
+    flex-wrap: wrap;
+    animation: fadeInUp 1.5s ease-out 0.5s both;
+}
+
+.step {
+    padding: 1rem 2rem;
+    border-radius: 15px;
+    border: 2px solid var(--border);
+    background: var(--card-bg);
+    color: #cccccc;
+    font-weight: 700;
+    font-size: 1rem;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+    backdrop-filter: blur(10px);
+    letter-spacing: 1px;
+}
+
+.step::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(0,212,255,0.2), transparent);
+    transition: left 0.6s ease;
+}
+
+.step:hover::before {
+    left: 100%;
+}
+
+.step.active {
+    border-color: var(--primary);
+    background: rgba(0,212,255,0.1);
+    color: var(--primary);
+    box-shadow: 0 0 30px rgba(0,212,255,0.4);
+    animation: pulse 2s ease-in-out infinite;
+    transform: scale(1.1);
+}
+
+/* Ultra Stats */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1.5rem;
+    margin: 2rem 0;
+}
+
+.stat-card {
+    background: var(--card-bg);
+    padding: 1.5rem;
+    border-radius: 15px;
+    border: 2px solid var(--border);
+    text-align: center;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(10px);
+    position: relative;
+    overflow: hidden;
+}
+
+.stat-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(0,212,255,0.1), transparent);
+    transition: left 0.5s ease;
+}
+
+.stat-card:hover::before {
+    left: 100%;
+}
+
+.stat-card:hover {
+    transform: translateY(-5px);
+    border-color: var(--primary);
+    box-shadow: 0 10px 30px rgba(0,212,255,0.2);
+}
+
+.stat-value {
+    font-size: 2.5rem;
+    font-weight: 900;
+    color: var(--primary);
+    text-shadow: 0 0 15px rgba(0,212,255,0.5);
+    margin-bottom: 0.5rem;
+}
+
+.stat-label {
+    font-size: 0.9rem;
+    color: #cccccc;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+}
+
+/* Ultra Table */
+.dataframe {
+    background: var(--card-bg);
+    border-radius: 15px;
+    overflow: hidden;
+    border: 2px solid var(--border);
+    backdrop-filter: blur(10px);
+}
+
+.dataframe th {
+    background: rgba(0,212,255,0.1);
+    color: var(--primary);
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 1rem;
+}
+
+.dataframe td {
+    color: white;
+    border-bottom: 1px solid var(--border);
+    padding: 1rem;
+    transition: all 0.3s ease;
+}
+
+.dataframe tr:hover {
+    background: rgba(0,212,255,0.05);
+    transform: scale(1.01);
+}
+
+/* Status Indicators */
+.status {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    border-radius: 25px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 0.25rem;
+    position: relative;
+    overflow: hidden;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.status::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+    transition: left 0.5s ease;
+}
+
+.status:hover::before {
+    left: 100%;
+}
+
+.status.success {
+    background: rgba(0,255,136,0.2);
+    color: var(--success);
+    border: 2px solid var(--success);
+    box-shadow: 0 0 20px rgba(0,255,136,0.3);
+}
+
+.status.warning {
+    background: rgba(255,107,53,0.2);
+    color: var(--warning);
+    border: 2px solid var(--warning);
+    box-shadow: 0 0 20px rgba(255,107,53,0.3);
+}
+
+.status.danger {
+    background: rgba(255,46,99,0.2);
+    color: var(--danger);
+    border: 2px solid var(--danger);
+    box-shadow: 0 0 20px rgba(255,46,99,0.3);
+}
+
+/* Loading Screen */
+.loading-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--dark-bg);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+    animation: fadeInUp 0.5s ease-out;
+}
+
+.loading-text {
+    font-family: 'Courier New', monospace;
+    color: var(--primary);
+    font-size: 2rem;
+    font-weight: 700;
+    animation: blink 1s infinite;
+    text-shadow: 0 0 20px var(--primary);
+    letter-spacing: 3px;
+}
+
+/* Matrix Characters */
+.matrix-char {
+    position: absolute;
+    color: var(--primary);
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    opacity: 0.8;
+    animation: matrix 4s linear infinite;
+    text-shadow: 0 0 10px var(--primary);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .brand { font-size: 2.5rem; }
+    .brand::before, .brand::after { display: none; }
+    .stepper { flex-direction: column; align-items: center; }
+    .stats-grid { grid-template-columns: 1fr; }
+    .card { padding: 1.5rem; }
+    .header { padding: 2rem 1rem; }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 12px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(255,255,255,0.02);
+    border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, var(--primary), var(--secondary));
+    border-radius: 6px;
+    box-shadow: 0 0 15px rgba(0,212,255,0.5);
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #00f0ff, #00ffb3);
+    box-shadow: 0 0 20px rgba(0,212,255,0.8);
+}
 </style>
-""", unsafe_allow_html=True)
 
-st.markdown('<div class="header"><div class="title">🔒 Secure Expense Tracker</div><div class="subtitle small-muted">Private • Encrypted • Simple</div></div>', unsafe_allow_html=True)
+<script>
+// Enhanced Matrix Rain Effect
+function createMatrixRain() {
+    const chars = "01アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン";
+    const container = document.querySelector('.main .block-container');
+    
+    for (let i = 0; i < 80; i++) {
+        const char = document.createElement('div');
+        char.className = 'matrix-char';
+        char.textContent = chars[Math.floor(Math.random() * chars.length)];
+        char.style.left = Math.random() * 100 + '%';
+        char.style.animationDelay = Math.random() * 4 + 's';
+        char.style.animationDuration = (Math.random() * 3 + 3) + 's';
+        char.style.fontSize = (Math.random() * 8 + 10) + 'px';
+        container.appendChild(char);
+    }
+}
+
+// Advanced Typewriter Effect
+function typewriterEffect() {
+    const brand = document.querySelector('.brand');
+    if (brand) {
+        const text = brand.textContent;
+        brand.textContent = '';
+        let i = 0;
+        
+        function type() {
+            if (i < text.length) {
+                brand.textContent += text.charAt(i);
+                i++;
+                setTimeout(type, 80);
+            }
+        }
+        type();
+    }
+}
+
+// Glitch Effect on Hover
+function addGlitchEffect() {
+    const elements = document.querySelectorAll('.card, .step, .stButton button, .stat-card');
+    elements.forEach(element => {
+        element.addEventListener('mouseenter', function() {
+            this.style.animation = 'glitch 0.3s ease-in-out';
+        });
+        element.addEventListener('mouseleave', function() {
+            this.style.animation = '';
+        });
+    });
+}
+
+// Particle System
+function createParticles() {
+    const container = document.querySelector('.main .block-container');
+    for (let i = 0; i < 30; i++) {
+        const particle = document.createElement('div');
+        particle.style.position = 'absolute';
+        particle.style.width = '3px';
+        particle.style.height = '3px';
+        particle.style.background = `hsl(${Math.random() * 60 + 180}, 100%, 70%)`;
+        particle.style.borderRadius = '50%';
+        particle.style.left = Math.random() * 100 + '%';
+        particle.style.top = Math.random() * 100 + '%';
+        particle.style.animation = `float ${Math.random() * 4 + 3}s ease-in-out infinite`;
+        particle.style.animationDelay = Math.random() * 3 + 's';
+        particle.style.boxShadow = '0 0 10px currentColor';
+        particle.style.pointerEvents = 'none';
+        container.appendChild(particle);
+    }
+}
+
+// Initialize all effects
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(() => {
+        createMatrixRain();
+        createParticles();
+        typewriterEffect();
+        addGlitchEffect();
+    }, 500);
+});
+
+// Loading Screen
+window.addEventListener('load', function() {
+    const loadingScreen = document.createElement('div');
+    loadingScreen.className = 'loading-screen';
+    loadingScreen.innerHTML = '<div class="loading-text">INITIALIZING SECURE VAULT...</div>';
+    document.body.appendChild(loadingScreen);
+    
+    setTimeout(() => {
+        loadingScreen.style.animation = 'fadeInUp 0.8s ease-out reverse';
+        setTimeout(() => {
+            loadingScreen.remove();
+        }, 800);
+    }, 2500);
+});
+
+// Add sound effects (optional)
+function playHoverSound() {
+    // Create a subtle hover sound effect
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    
+    oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+    oscillator.type = 'sine';
+    
+    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+    
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 0.1);
+}
+
+// Add hover sound to interactive elements
+document.addEventListener('DOMContentLoaded', function() {
+    const interactiveElements = document.querySelectorAll('.stButton button, .step, .card');
+    interactiveElements.forEach(element => {
+        element.addEventListener('mouseenter', playHoverSound);
+    });
+});
+</script>
+""",
+    unsafe_allow_html=True,
+)
+
+# Ultra Header
+st.markdown(
+    """
+    <div class="header">
+        <div class="brand">🛡️ Secure Expense Tracker</div>
+        <div class="sub">Neon-encrypted • Private Vault • Cyber UI</div>
+        <div>
+            <span class="status success">🔒 Encrypted</span>
+            <span class="status warning">⚡ Real-time</span>
+            <span class="status danger">🛡️ Secure</span>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # -----------------------------
-# App Flow (OTP -> Main -> DOB unlock for viewing)
+# Session state
 # -----------------------------
+if "page" not in st.session_state:
+    st.session_state.page = 1  # 1=OTP, 2=Add, 3=Unlock/View
+if "generated_otp" not in st.session_state:
+    st.session_state.generated_otp = None
 if "otp_verified" not in st.session_state:
     st.session_state.otp_verified = False
 if "dob_verified" not in st.session_state:
     st.session_state.dob_verified = False
 
-# OTP Section (unchanged in flow; dev mode prints OTP)
-if not st.session_state.otp_verified:
-    with st.container():
-        st.markdown('<div class="card fade">', unsafe_allow_html=True)
-        st.subheader("Step 1 — Login with OTP")
-        user_email = st.text_input("Enter your email to receive OTP")
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            if st.button("Send OTP"):
-                if not user_email:
-                    st.error("Please enter an email first.")
-                else:
+
+def render_stepper(active_idx: int):
+    steps = ["OTP", "Add", "Unlock & View"]
+    html_steps = "<div class='stepper'>"
+    for i, s in enumerate(steps, start=1):
+        cls = "step active" if i == active_idx else "step"
+        html_steps += f"<div class='{cls}'>#{i} {s}</div>"
+    html_steps += "</div>"
+    st.markdown(html_steps, unsafe_allow_html=True)
+
+
+# -----------------------------
+# PAGE 1 — OTP
+# -----------------------------
+if st.session_state.page == 1:
+    render_stepper(1)
+    
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("🔐 Step 1 — Access OTP")
+    st.markdown("Enter your email to receive a secure one-time password for vault access.")
+    
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        email_input = st.text_input("📧 Enter email to receive OTP", placeholder="you@example.com")
+        if st.button("🚀 Send OTP", key="send_otp"):
+            if not email_input or "@" not in email_input:
+                st.error("❌ Please enter a valid email address.")
+            else:
+                with st.spinner("🔐 Generating secure OTP..."):
                     otp = generate_otp()
                     st.session_state.generated_otp = otp
                     if DEV_MODE:
-                        # developer-friendly: show OTP in-app (do not use in production)
-                        st.info(f"Dev OTP: {otp}")
-                        st.success("OTP generated (dev mode).")
+                        st.info(f"🔑 Dev OTP: **{otp}**")
+                        st.success("✅ OTP generated (dev mode).")
                     else:
-                        sent = send_otp_via_smtp(user_email, otp)
+                        sent = send_otp_via_smtp(email_input, otp)
                         if sent:
-                            st.success("OTP sent to your email.")
-                        # send_otp_via_smtp already shows errors via st.error if fail
-        with col2:
-            entered = st.text_input("Enter OTP received")
-            if st.button("Verify OTP"):
-                if entered and entered == st.session_state.get("generated_otp"):
-                    st.session_state.otp_verified = True
-                    st.success("OTP Verified ✅ — You can use the app.")
-                else:
-                    st.error("Invalid OTP.")
-
-        st.markdown('</div>', unsafe_allow_html=True)
-        st.stop()  # stop further rendering until OTP verified
-
-# Main app area (post OTP)
-left, right = st.columns([2, 3])
-
-with left:
-    st.markdown('<div class="card fade">', unsafe_allow_html=True)
-    st.subheader("Add Expense")
-    cat = st.text_input("Category", placeholder="e.g. Food, Travel")
-    amt = st.number_input("Amount (₹)", min_value=0.0, format="%.2f")
-    desc = st.text_area("Description (optional)", height=80)
-    if st.button("Add Expense"):
-        if not cat or amt <= 0:
-            st.error("Please provide a category and an amount > 0.")
-        else:
-            add_expense(cat.strip(), float(amt), desc.strip())
-            st.success("Expense added and encrypted ✅")
-    st.markdown('<p class="small-muted">Your amounts are encrypted locally (secret.key stored in app folder)</p>', unsafe_allow_html=True)
+                            st.success("✅ OTP sent — check your inbox/spam.")
+                        else:
+                            st.error("❌ Failed to send OTP. Please try again.")
+    
+    with col2:
+        entered_otp = st.text_input("🔢 Enter received OTP", placeholder="123456")
+        if st.button("🔓 Verify OTP", key="verify_otp"):
+            if entered_otp and st.session_state.generated_otp and entered_otp == st.session_state.generated_otp:
+                st.session_state.otp_verified = True
+                st.session_state.page = 2
+                st.success("🎉 OTP Verified — Welcome to your vault!")
+                st.rerun()
+            else:
+                st.error("❌ Invalid OTP. Please check and try again.")
+    
+    # Security tips
+    st.info("🔒 **Security Tips:** OTP expires after 10 minutes • Never share your OTP • Check spam folder if not received")
     st.markdown('</div>', unsafe_allow_html=True)
 
-with right:
-    st.markdown('<div class="card fade">', unsafe_allow_html=True)
-    st.subheader("View Expenses (DOB unlock)")
-    st.markdown('<p class="small-muted">To decrypt and view expenses, enter your DOB (any non-empty value is accepted in this demo)</p>', unsafe_allow_html=True)
-    dob = st.text_input("Enter DOB (dd-mm-yyyy)", type="password")
-    if st.button("Unlock & Show Expenses"):
-        if dob and dob.strip():
+
+# -----------------------------
+# PAGE 2 — Add Expense + HUD
+# -----------------------------
+elif st.session_state.page == 2 and st.session_state.otp_verified:
+    render_stepper(2)
+    left, right = st.columns([2, 3])
+
+    with left:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.subheader("💰 Add Expense")
+        st.markdown("Securely add your expenses to the encrypted vault.")
+        
+        category = st.text_input("📂 Category", placeholder="Food, Travel, Bills, Shopping...")
+        amount = st.number_input("💵 Amount (₹)", min_value=0.0, format="%.2f", step=0.01)
+        description = st.text_area("📝 Description (optional)", height=90, placeholder="Add any additional details about this expense...")
+        
+        if st.button("🔒 Add to Vault", key="add_expense"):
+            if not category or amount <= 0:
+                st.error("❌ Please provide a category and amount > 0.")
+            else:
+                with st.spinner("🔐 Encrypting and storing..."):
+                    add_expense(category.strip(), float(amount), description.strip())
+                    st.success("✅ Expense added & encrypted successfully!")
+                    st.balloons()
+        
+        st.caption("🔐 All amounts are encrypted with your local key (secret.key).")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with right:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.subheader("📊 Vault HUD")
+        st.markdown("Live statistics from your encrypted expense vault.")
+        
+        rows = fetch_expenses()
+        total_count, total_amount, unique_cats = compute_stats(rows)
+        
+        # Enhanced stats display
+        stats_html = f"""
+        <div class='stats-grid'>
+            <div class='stat-card'>
+                <div class='stat-value'>{total_count}</div>
+                <div class='stat-label'>📈 Records</div>
+            </div>
+            <div class='stat-card'>
+                <div class='stat-value'>₹{total_amount:,.2f}</div>
+                <div class='stat-label'>💰 Total</div>
+            </div>
+            <div class='stat-card'>
+                <div class='stat-value'>{unique_cats}</div>
+                <div class='stat-label'>📂 Categories</div>
+            </div>
+        </div>
+        """
+        st.markdown(stats_html, unsafe_allow_html=True)
+
+        # Recent activity
+        if rows:
+            st.subheader("🕒 Recent Activity")
+            for i, (rid, cat, amt, desc) in enumerate(rows[:3]):
+                st.write(f"**{cat}** - ₹{amt}")
+                if desc:
+                    st.caption(desc)
+
+        if st.button("🔓 Proceed to Unlock & View", key="proceed_view"):
+            st.session_state.page = 3
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
+# -----------------------------
+# PAGE 3 — Unlock & View
+# -----------------------------
+elif st.session_state.page == 3:
+    render_stepper(3)
+    
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("🔓 Unlock Vault — Verify DOB")
+    st.markdown("Enter your date of birth to decrypt and view your expense data.")
+    
+    dob_input = st.text_input("🎂 Enter DOB (dd-mm-yyyy)", type="password", placeholder="dd-mm-yyyy")
+    if st.button("🔓 Unlock Vault", key="unlock_vault"):
+        if dob_input and dob_input.strip():
             st.session_state.dob_verified = True
+            st.success("🎉 Vault unlocked successfully!")
         else:
-            st.error("Please enter DOB to unlock.")
+            st.error("❌ Please enter DOB to unlock.")
 
     if st.session_state.dob_verified:
-        expenses = get_all_expenses()
+        expenses = fetch_expenses()
         if not expenses:
-            st.info("No expenses yet.")
+            st.info("📭 No expenses recorded yet. Add some expenses to see them here!")
         else:
-            # build a table with id, category, amount, description
-            st.markdown('<div class="table-wrap">', unsafe_allow_html=True)
-            # create simple HTML table to preserve styles
-            table_html = "<table><thead><tr><th>ID</th><th>Category</th><th>Amount (₹)</th><th>Description</th></tr></thead><tbody>"
-            for rid, cat, amount, desc in expenses:
-                # escape HTML in text roughly
-                cat_s = str(cat).replace("<","&lt;").replace(">","&gt;")
-                desc_s = str(desc).replace("<","&lt;").replace(">","&gt;")
-                table_html += f"<tr><td>{rid}</td><td>{cat_s}</td><td>{amount}</td><td>{desc_s}</td></tr>"
-            table_html += "</tbody></table>"
-            st.markdown(table_html, unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.subheader("📊 Expense Records")
+            
+            # Enhanced summary stats
+            total_count, total_amount, unique_cats = compute_stats(expenses)
+            stats_html = f"""
+            <div class='stats-grid'>
+                <div class='stat-card'>
+                    <div class='stat-value'>{total_count}</div>
+                    <div class='stat-label'>📈 Records</div>
+                </div>
+                <div class='stat-card'>
+                    <div class='stat-value'>₹{total_amount:,.2f}</div>
+                    <div class='stat-label'>💰 Total</div>
+                </div>
+                <div class='stat-card'>
+                    <div class='stat-value'>{unique_cats}</div>
+                    <div class='stat-label'>📂 Categories</div>
+                </div>
+            </div>
+            """
+            st.markdown(stats_html, unsafe_allow_html=True)
+            
+            # Display expenses in a table
+            if expenses:
+                df_data = []
+                for rid, cat, amt, desc in expenses:
+                    df_data.append({
+                        "ID": rid,
+                        "Category": cat,
+                        "Amount (₹)": amt,
+                        "Description": desc or "No description"
+                    })
+                
+                import pandas as pd
+                df = pd.DataFrame(df_data)
+                st.dataframe(df, use_container_width=True)
+            
+            st.info("💡 **Tip:** Your data is securely encrypted. Keep your secret.key safe to maintain access.")
+            
+    st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown("<hr style='opacity:0.08'/>", unsafe_allow_html=True)
-st.markdown("<div class='small-muted' style='text-align:center'>Tip: Keep <code>secret.key</code> safe — if deleted, old encrypted data cannot be recovered.</div>", unsafe_allow_html=True)
+
+# Ultra Footer
+st.markdown("---")
+st.markdown(
+    """
+    <div style="text-align: center; color: #cccccc; font-size: 0.9rem; padding: 2rem; background: rgba(255,255,255,0.02); border-radius: 15px; border: 1px solid var(--border); margin-top: 3rem;">
+        <div style="margin-bottom: 1rem; font-weight: 700; letter-spacing: 2px;">🔐 Keep <code>secret.key</code> safe. If lost, old encrypted data cannot be recovered.</div>
+        <div style="font-size: 0.8rem; opacity: 0.7; letter-spacing: 1px;">🛡️ Secure Expense Tracker v3.0 • Built with Streamlit & Fernet Encryption</div>
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
 
 
-###############################################################################################################################################################################################################################################
